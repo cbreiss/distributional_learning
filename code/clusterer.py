@@ -4,6 +4,7 @@ import numpy as np
 from math import exp, log, pi
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from tqdm import tqdm
 
 DEFAULT_VARIABILITY_SCALAR = 1
 DEFAULT_CONSTRAIN_PARTITIONS = True
@@ -160,8 +161,14 @@ def find_classes(input_data, sounds, v_scalar=DEFAULT_VARIABILITY_SCALAR,
         # Find no more than three clusters.
         max_clusters = min(3, len(sounds))
 
-    # Go through all the PCS we want to cluster over
-    for i in range(highest_dim):
+    # go through all the PCs we want to cluster over
+    depth = len(visited_classes)  # proxy for recursion depth
+    pc_bar = tqdm(
+        range(highest_dim),
+        desc=f"  {'  ' * min(depth, 4)}clustering {len(sounds)} sounds ({highest_dim} PCs)",
+        leave=False,
+    )
+    for i in pc_bar:
         classes_list = []
         sub_classes = []
         col = pca_values[:, i]
