@@ -64,6 +64,10 @@ def calculate_mean_and_variance(X, n):
     return mean, variance
 
 def compute_bic(kmeans, X):
+    # compute_bic assumes scalar items when iterating X; flatten to 1D to
+    # handle the (n_samples, 1) arrays that KMeans.fit receives.  This is
+    # safe because labels_ is indexed by sample position, not by column.
+    X = X.ravel()
     centers = [kmeans.cluster_centers_]
     labels  = kmeans.labels_
     # number of clusters
