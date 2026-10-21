@@ -2,13 +2,75 @@ import argparse
 import numpy as np
 
 from math import exp, log, pi
-from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 DEFAULT_VARIABILITY_SCALAR = 1
 DEFAULT_CONSTRAIN_PARTITIONS = True
 DEFAULT_CONSTRAIN_PCS = True
+
+
+class Exact1DKMeans:
+    '''
+    Exact 1-D k-means for k in {1, 2, 3} (cbreiss fork, 2026-10-21), replacing
+    sklearn's KMeans, which this code originally called with no seed.
+
+    Why: sklearn's KMeans is randomly initialised, so the classes found varied
+    from run to run.  For 35 Spanish phones (PPMI vectors) they ranged from 8
+    to 83 under sklearn >= 1.4's single initialisation.  Even with n_init=10
+    (the default when this code was written) and a pinned seed, the answer
+    depended on the seed: 56 to 136 over seeds 0-9.
+
+    How: every clustering here is of one PC, i.e. 1-D, and in 1-D the
+    partition minimising within-cluster sum of squares (k-means' objective)
+    is a set of contiguous runs of the sorted values.  For k <= 3, every
+    choice of split points is checked: O(n^2) for k = 3, computed from prefix
+    sums.  The result is the global optimum, with no randomness, which is
+    what k-means approximates.  Ties go to the earliest split point.
+
+    Exposes the parts of sklearn's KMeans interface that find_classes and
+    compute_bic use: fit(X) -> self, labels_, cluster_centers_, n_clusters.
+    '''
+    def __init__(self, n_clusters):
+        if n_clusters not in (1, 2, 3):
+            raise ValueError('Exact1DKMeans supports 1 to 3 clusters')
+        self.n_clusters = n_clusters
+
+    def fit(self, X):
+        x = np.asarray(X, dtype=float).ravel()
+        n, k = len(x), self.n_clusters
+        if n < k:
+            raise ValueError('fewer points than clusters')
+        order = np.argsort(x, kind='mergesort')
+        xs = x[order] - x.mean()   # centring keeps the prefix sums well conditioned
+        s1 = np.concatenate([[0.0], np.cumsum(xs)])
+        s2 = np.concatenate([[0.0], np.cumsum(xs * xs)])
+
+        def sse(i, j):
+            # sum of squared deviations of xs[i:j] from its mean; i, j may be arrays
+            return (s2[j] - s2[i]) - (s1[j] - s1[i]) ** 2 / (j - i)
+
+        if k == 1:
+            cuts = []
+        elif k == 2:
+            i = np.arange(1, n)
+            cuts = [int(i[np.argmin(sse(0, i) + sse(i, n))])]
+        else:
+            i, j = np.triu_indices(n, k=1)        # 0 <= i < j <= n-1
+            keep = i >= 1                          # three non-empty runs
+            i, j = i[keep], j[keep]
+            best = np.argmin(sse(0, i) + sse(i, j) + sse(j, n))
+            cuts = [int(i[best]), int(j[best])]
+
+        sorted_labels = np.zeros(n, dtype=int)
+        for c in cuts:
+            sorted_labels[c:] += 1
+        self.labels_ = np.empty(n, dtype=int)
+        self.labels_[order] = sorted_labels
+        self.cluster_centers_ = np.array(
+            [[x[self.labels_ == q].mean()] for q in range(k)]
+        )
+        return self
 
 VALUE_EXT = '.data'
 SOUND_EXT = '.sounds'
@@ -180,7 +242,7 @@ def find_classes(input_data, sounds, v_scalar=DEFAULT_VARIABILITY_SCALAR,
         bics = []
 
         for j in range(1, max_clusters + 1):
-            kmeans = KMeans(n_clusters=j)
+            kmeans = Exact1DKMeans(n_clusters=j)
             k_clusters.append(kmeans.fit(col_reshaped))
             bics.append(compute_bic(kmeans, col_reshaped))
 
